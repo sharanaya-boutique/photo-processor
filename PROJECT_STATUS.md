@@ -1,6 +1,7 @@
 # Photo Processor — Project Status
 
 **Last updated:** 2026-03-21
+**Closes:** [#1 — core photo processing pipeline](https://github.com/sharanaya-boutique/photo-processor/issues/1)
 
 ---
 
