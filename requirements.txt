@@ -1,0 +1,6 @@
+openpyxl
+Pillow
+python-barcode[images]
+simple-lama-inpainting
+opencv-python
+numpy

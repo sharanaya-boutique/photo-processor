@@ -1,0 +1,266 @@
+"""
+process.py — Sharanaya Boutique Photo Processor
+
+Usage:
+    python process.py --episode=EP-271
+    python process.py --episode=EP-271 --calibrate
+"""
+
+import argparse
+import sys
+import warnings
+from pathlib import Path
+
+import numpy as np
+import openpyxl
+from PIL import Image
+
+# Watermark mask region (relative to image dimensions)
+MASK_Y_START = 0.75
+MASK_Y_END   = 0.88
+MASK_X_START = 0.30
+MASK_X_END   = 0.70
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Remove watermark and embed barcode on product photos.")
+    parser.add_argument("--episode", required=True, help="Episode identifier, e.g. EP-271")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Show mask overlay on first image and exit (for calibration)")
+    return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Excel mapping
+# ---------------------------------------------------------------------------
+
+def load_excel(episode: str) -> dict:
+    """Return {product_id: {sln, product_id, ...}} from docs/{episode}.xlsx."""
+    path = Path("docs") / f"{episode}.xlsx"
+    if not path.exists():
+        sys.exit(f"ERROR: Excel file not found: {path}")
+
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+
+    mapping = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):  # skip header row
+        if not row or len(row) < 9:
+            continue
+        episode_col, sln, bill_done, seq, price1, price2, fabric, color, product_id = row[:9]
+        if not product_id:
+            continue
+        product_id = str(product_id).strip()
+        mapping[product_id] = {
+            "episode":    episode_col,
+            "sln":        sln,
+            "product_id": product_id,
+            "price":      price1,
+            "fabric":     fabric,
+            "color":      color,
+        }
+
+    if not mapping:
+        sys.exit(f"ERROR: No product rows found in {path}")
+
+    print(f"Loaded {len(mapping)} product(s) from {path}")
+    return mapping
+
+
+# ---------------------------------------------------------------------------
+# Image discovery
+# ---------------------------------------------------------------------------
+
+def find_images(episode: str) -> list:
+    """Return sorted list of .jpg Paths under media/{episode}/."""
+    media_dir = Path("media") / episode
+    if not media_dir.exists():
+        sys.exit(f"ERROR: Media directory not found: {media_dir}")
+
+    images = sorted(media_dir.glob("*.jpg")) + sorted(media_dir.glob("*.JPG"))
+    if not images:
+        sys.exit(f"ERROR: No .jpg images found in {media_dir}")
+
+    print(f"Found {len(images)} image(s) in {media_dir}")
+    return images
+
+
+def extract_product_id(path: Path) -> str:
+    """'B000055923 A.jpg' → 'B000055923'"""
+    return path.stem.split(" ")[0]
+
+
+# ---------------------------------------------------------------------------
+# Watermark removal
+# ---------------------------------------------------------------------------
+
+def build_mask(img: Image.Image) -> Image.Image:
+    """Create a white-on-black PIL mask for the watermark region."""
+    w, h = img.size
+    mask = Image.new("L", (w, h), 0)  # black background
+
+    y0 = int(h * MASK_Y_START)
+    y1 = int(h * MASK_Y_END)
+    x0 = int(w * MASK_X_START)
+    x1 = int(w * MASK_X_END)
+
+    mask_arr = np.array(mask)
+    mask_arr[y0:y1, x0:x1] = 255
+    return Image.fromarray(mask_arr)
+
+
+def remove_watermark(img: Image.Image, lama) -> Image.Image:
+    """Inpaint the watermark region using SimpleLama."""
+    mask = build_mask(img)
+    result = lama(img, mask)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Barcode embedding
+# ---------------------------------------------------------------------------
+
+def embed_barcode(img: Image.Image, value: str) -> Image.Image:
+    """Generate a Code 128 barcode and paste it into the bottom-right corner."""
+    import barcode
+    from barcode.writer import ImageWriter
+    import io
+
+    # Generate barcode to an in-memory PNG
+    code128_class = barcode.get_barcode_class("code128")
+    writer = ImageWriter()
+    writer.set_options({
+        "module_height": 8.0,
+        "font_size":     6,
+        "text_distance": 2.0,
+        "quiet_zone":    2.0,
+    })
+
+    buffer = io.BytesIO()
+    code128_class(value, writer=writer).write(buffer)
+    buffer.seek(0)
+    barcode_img = Image.open(buffer).convert("RGB")
+
+    # Resize barcode to ~20% of image width
+    img_w, img_h = img.size
+    target_w = max(120, int(img_w * 0.20))
+    ratio = target_w / barcode_img.width
+    target_h = int(barcode_img.height * ratio)
+    barcode_img = barcode_img.resize((target_w, target_h), Image.LANCZOS)
+
+    # Add white padding around barcode
+    pad = 6
+    padded_w = barcode_img.width + pad * 2
+    padded_h = barcode_img.height + pad * 2
+    padded = Image.new("RGB", (padded_w, padded_h), (255, 255, 255))
+    padded.paste(barcode_img, (pad, pad))
+
+    # Paste at bottom-right, 10px from edges
+    margin = 10
+    x = img_w - padded_w - margin
+    y = img_h - padded_h - margin
+
+    result = img.copy()
+    result.paste(padded, (x, y))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+def save_image(img: Image.Image, episode: str, original_path: Path):
+    out_dir = Path("output") / episode
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / original_path.name
+    img.save(out_path, "JPEG", quality=95)
+    print(f"  Saved → {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# Calibration helper
+# ---------------------------------------------------------------------------
+
+def calibrate(episode: str):
+    """Overlay the mask region on the first image and display it."""
+    images = find_images(episode)
+    img = Image.open(images[0]).convert("RGB")
+    mask = build_mask(img)
+
+    # Tint the masked area red so it's easy to see
+    overlay = img.copy()
+    mask_arr = np.array(mask)
+    img_arr  = np.array(overlay)
+    img_arr[mask_arr == 255, 0] = 255   # red channel max
+    img_arr[mask_arr == 255, 1] = 0
+    img_arr[mask_arr == 255, 2] = 0
+
+    preview = Image.fromarray(img_arr)
+    w, h = preview.size
+    # Scale down for display if large
+    if w > 1200:
+        scale = 1200 / w
+        preview = preview.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+
+    print(f"Calibration preview for: {images[0].name}")
+    print(f"  Image size : {w} x {h}")
+    print(f"  Mask region: y={MASK_Y_START*100:.0f}%–{MASK_Y_END*100:.0f}%  "
+          f"x={MASK_X_START*100:.0f}%–{MASK_X_END*100:.0f}%")
+    print("Adjust MASK_* constants in process.py if the red overlay doesn't cover the watermark.")
+    preview.show()
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    args = parse_args()
+    episode = args.episode
+
+    if args.calibrate:
+        calibrate(episode)
+        return
+
+    mapping = load_excel(episode)
+    images  = find_images(episode)
+
+    # Load SimpleLama once (model download on first run)
+    print("Loading inpainting model (may download on first run)…")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        from simple_lama_inpainting import SimpleLama
+        lama = SimpleLama()
+
+    processed = 0
+    skipped   = 0
+
+    for img_path in images:
+        product_id = extract_product_id(img_path)
+
+        if product_id not in mapping:
+            print(f"  SKIP {img_path.name} — no Excel entry for '{product_id}'")
+            skipped += 1
+            continue
+
+        row           = mapping[product_id]
+        barcode_value = row["product_id"]
+
+        print(f"  Processing {img_path.name} (barcode: {barcode_value})…")
+        img = Image.open(img_path).convert("RGB")
+        img = remove_watermark(img, lama)
+        img = embed_barcode(img, barcode_value)
+        save_image(img, episode, img_path)
+        processed += 1
+
+    print(f"\nDone. {processed} processed, {skipped} skipped.")
+    if skipped:
+        print("Skipped images had no matching product ID in the Excel file.")
+
+
+if __name__ == "__main__":
+    main()

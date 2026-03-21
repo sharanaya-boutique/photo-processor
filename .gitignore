@@ -1,0 +1,21 @@
+# Actual content — private / large files, not committed
+docs/**
+!docs/.gitkeep
+
+media/**
+!media/.gitkeep
+
+output/**
+!output/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
