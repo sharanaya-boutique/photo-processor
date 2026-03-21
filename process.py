@@ -6,6 +6,8 @@ Usage:
     python process.py --episode=EP-271 --calibrate
     python process.py --episode=EP-271 --verify-only
     python process.py --episode=EP-271 --report
+    python process.py --episodes=EP-271,EP-272
+    python process.py --all
 """
 
 import argparse
@@ -34,7 +36,13 @@ CONFIG_DIR = Path("config")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Remove watermark and embed barcode on product photos.")
-    parser.add_argument("--episode", required=True, help="Episode identifier, e.g. EP-271")
+    ep_group = parser.add_mutually_exclusive_group(required=True)
+    ep_group.add_argument("--episode", help="Single episode identifier, e.g. EP-271")
+    ep_group.add_argument("--episodes", metavar="EP1,EP2,...",
+                          help="Comma-separated list of episodes to process in sequence")
+    ep_group.add_argument("--all", action="store_true", dest="all_episodes",
+                          help="Auto-discover and process all episodes that have both "
+                               "docs/<ep>.xlsx and media/<ep>/")
     parser.add_argument("--calibrate", action="store_true",
                         help="Show mask overlay on first image and exit (for calibration)")
     parser.add_argument("--verify-only", action="store_true",
@@ -89,6 +97,23 @@ def load_episode_config(episode: str) -> dict:
     validate_config(config, config_path)
     print(f"Loaded mask config from {config_path}")
     return config
+
+
+# ---------------------------------------------------------------------------
+# Episode discovery (Phase 5)
+# ---------------------------------------------------------------------------
+
+def discover_all_episodes() -> list[str]:
+    """Return sorted episode IDs that have both docs/<ep>.xlsx and media/<ep>/."""
+    docs_dir = Path("docs")
+    media_dir = Path("media")
+    episodes = []
+    if docs_dir.exists():
+        for xlsx_path in sorted(docs_dir.glob("*.xlsx")):
+            ep = xlsx_path.stem
+            if (media_dir / ep).is_dir():
+                episodes.append(ep)
+    return episodes
 
 
 # ---------------------------------------------------------------------------
@@ -418,35 +443,19 @@ def calibrate(episode: str, config: dict):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Per-episode pipeline (Phase 5 refactor — shared by single and batch modes)
 # ---------------------------------------------------------------------------
 
-def main():
-    args = parse_args()
-    episode = args.episode
+def _run_pipeline(episode: str, lama) -> dict:
+    """Run the full processing pipeline for *episode* using *lama*.
+
+    Returns the run_record dict (same structure as Phase 4 report entries).
+    Propagates SystemExit on fatal errors (missing files, bad config) so the
+    batch driver can catch it without aborting the whole run.
+    """
     config = load_episode_config(episode)
-
-    if args.calibrate:
-        calibrate(episode, config)
-        return
-
-    if args.verify_only:
-        passed = verify_only_mode(episode)
-        sys.exit(0 if passed else 1)
-
-    if args.report:
-        report_mode(episode)
-        return
-
     mapping = load_excel(episode)
     images  = find_images(episode)
-
-    # Load SimpleLama once (model download on first run)
-    print("Loading inpainting model (may download on first run)…")
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        from simple_lama_inpainting import SimpleLama
-        lama = SimpleLama()
 
     processed   = 0
     skipped     = 0
@@ -500,8 +509,131 @@ def main():
     print(f"\nReport written → {_report_path(episode)}")
 
     print_summary_table(run_record)
+    return run_record
 
-    if errors:
+
+def print_cross_episode_summary(results: list[dict]) -> None:
+    """Print aggregated statistics across all processed episodes."""
+    total_episodes = len(results)
+    total_processed = sum(r.get("processed", 0) for r in results)
+    total_skipped   = sum(r.get("skipped",   0) for r in results)
+    total_errors    = sum(r.get("errors",    0) for r in results)
+    failed_episodes = [r for r in results if r.get("failed")]
+
+    print(f"\n{'='*60}")
+    print(f"  Cross-episode summary")
+    print(f"{'='*60}")
+    print(f"  Episodes  : {total_episodes}")
+    print(f"  Processed : {total_processed}")
+    print(f"  Skipped   : {total_skipped}")
+    print(f"  Errors    : {total_errors}")
+    if failed_episodes:
+        print(f"\n  Episodes with failures:")
+        for r in failed_episodes:
+            ep      = r.get("episode", "?")
+            err_msg = r.get("error", "")
+            suffix  = f" — {err_msg}" if err_msg else ""
+            print(f"    [{ep}]{suffix}")
+    print(f"{'='*60}\n")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    args = parse_args()
+
+    # Determine episode list and whether we are in batch mode
+    if args.episode:
+        episodes = [args.episode]
+        is_batch = False
+    elif args.episodes:
+        episodes = [e.strip() for e in args.episodes.split(",") if e.strip()]
+        if not episodes:
+            sys.exit("ERROR: --episodes value is empty")
+        is_batch = True
+    else:  # args.all_episodes is True
+        episodes = discover_all_episodes()
+        if not episodes:
+            sys.exit(
+                "ERROR: --all found no episodes "
+                "(both docs/<ep>.xlsx and media/<ep>/ must exist for each)"
+            )
+        print(f"Discovered {len(episodes)} episode(s): {', '.join(episodes)}")
+        is_batch = True
+
+    # Single-episode-only special modes (calibrate / verify-only / report)
+    if not is_batch:
+        episode = episodes[0]
+        config  = load_episode_config(episode)
+
+        if args.calibrate:
+            calibrate(episode, config)
+            return
+
+        if args.verify_only:
+            passed = verify_only_mode(episode)
+            sys.exit(0 if passed else 1)
+
+        if args.report:
+            report_mode(episode)
+            return
+
+    # Load SimpleLama once — model is shared across all episodes in a batch
+    print("Loading inpainting model (may download on first run)…")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        from simple_lama_inpainting import SimpleLama
+        lama = SimpleLama()
+
+    if not is_batch:
+        # Single episode: preserve existing exit-code behaviour
+        run_record = _run_pipeline(episodes[0], lama)
+        if run_record["errors"]:
+            sys.exit(1)
+        return
+
+    # Batch mode: process each episode, collecting results; failures do not abort others
+    results: list[dict] = []
+    for episode in episodes:
+        print(f"\n{'='*60}")
+        print(f"  Processing episode: {episode}")
+        print(f"{'='*60}")
+        try:
+            run_record = _run_pipeline(episode, lama)
+            results.append({
+                "episode":   episode,
+                "processed": run_record["processed"],
+                "skipped":   run_record["skipped"],
+                "errors":    run_record["errors"],
+                "failed":    run_record["errors"] > 0,
+            })
+        except SystemExit as exc:
+            msg = " ".join(str(a) for a in exc.args).strip() if exc.args else ""
+            print(f"\nFAILED: {msg}")
+            results.append({
+                "episode":   episode,
+                "processed": 0,
+                "skipped":   0,
+                "errors":    1,
+                "failed":    True,
+                "error":     msg,
+            })
+        except Exception as exc:
+            print(f"\nFAILED: {exc}")
+            results.append({
+                "episode":   episode,
+                "processed": 0,
+                "skipped":   0,
+                "errors":    1,
+                "failed":    True,
+                "error":     str(exc),
+            })
+
+    print_cross_episode_summary(results)
+
+    if any(r["failed"] for r in results):
         sys.exit(1)
 
 
