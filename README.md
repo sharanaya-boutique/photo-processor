@@ -70,6 +70,10 @@ Your prompt will change to show `(.venv)` confirming the environment is active. 
 pip install -r requirements.txt
 ```
 
+> **Important:** Always install `requirements.txt` (not `requirements-ci.txt`) to run the tool.
+> `requirements-ci.txt` is for CI pipelines only — it intentionally excludes the AI inpainting
+> library (`simple-lama-inpainting`) and will cause a `ModuleNotFoundError` if used to run the script.
+
 > `simple-lama-inpainting` downloads a ~200 MB AI model on first run. Subsequent runs use the cached model.
 
 ### 5. Verify the install
@@ -232,8 +236,10 @@ Each processing run appends to `output/<episode>/report.json`:
 
 ## Development
 
+> For running the tool use `requirements.txt`. The commands below are for linting and testing only.
+
 ```bash
-# Install CI/dev dependencies (no PyTorch — fast)
+# Install CI/dev dependencies (no PyTorch — fast; does NOT let you run process.py)
 pip install -r requirements-ci.txt
 
 # Run linter
