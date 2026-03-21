@@ -8,6 +8,8 @@ media/**
 output/**
 !output/.gitkeep
 
+config/*.json
+
 # Python
 __pycache__/
 *.py[cod]

@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 import warnings
 from pathlib import Path
@@ -15,11 +16,13 @@ import numpy as np
 import openpyxl
 from PIL import Image
 
-# Watermark mask region (relative to image dimensions)
+# Watermark mask region (relative to image dimensions) — module-level defaults
 MASK_Y_START = 0.75
 MASK_Y_END   = 0.88
 MASK_X_START = 0.30
 MASK_X_END   = 0.70
+
+CONFIG_DIR = Path("config")
 
 
 # ---------------------------------------------------------------------------
@@ -32,6 +35,53 @@ def parse_args():
     parser.add_argument("--calibrate", action="store_true",
                         help="Show mask overlay on first image and exit (for calibration)")
     return parser.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Per-episode mask config
+# ---------------------------------------------------------------------------
+
+def _defaults() -> dict:
+    return {
+        "mask_y_start": MASK_Y_START,
+        "mask_y_end":   MASK_Y_END,
+        "mask_x_start": MASK_X_START,
+        "mask_x_end":   MASK_X_END,
+    }
+
+
+def validate_config(config: dict, source=None) -> None:
+    """Validate mask values are floats in [0, 1] and each start < end."""
+    label = f" in {source}" if source else ""
+    for key in ("mask_y_start", "mask_y_end", "mask_x_start", "mask_x_end"):
+        val = config[key]
+        if not isinstance(val, (int, float)) or not (0 <= val <= 1):
+            sys.exit(f"ERROR: '{key}' must be a number between 0 and 1{label}, got {val!r}")
+    for start_key, end_key in (("mask_y_start", "mask_y_end"), ("mask_x_start", "mask_x_end")):
+        if config[start_key] >= config[end_key]:
+            sys.exit(f"ERROR: '{start_key}' must be less than '{end_key}'{label}")
+
+
+def load_episode_config(episode: str) -> dict:
+    """Return mask config for *episode*, falling back to module-level defaults."""
+    config_path = CONFIG_DIR / f"{episode}.json"
+    if not config_path.exists():
+        return _defaults()
+
+    try:
+        with config_path.open() as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        sys.exit(f"ERROR: Invalid JSON in {config_path}: {e}")
+
+    known_keys = set(_defaults())
+    config = _defaults()
+    for k, v in data.items():
+        if k in known_keys:
+            config[k] = v
+    validate_config(config, config_path)
+    print(f"Loaded mask config from {config_path}")
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -98,24 +148,24 @@ def extract_product_id(path: Path) -> str:
 # Watermark removal
 # ---------------------------------------------------------------------------
 
-def build_mask(img: Image.Image) -> Image.Image:
+def build_mask(img: Image.Image, config: dict) -> Image.Image:
     """Create a white-on-black PIL mask for the watermark region."""
     w, h = img.size
     mask = Image.new("L", (w, h), 0)  # black background
 
-    y0 = int(h * MASK_Y_START)
-    y1 = int(h * MASK_Y_END)
-    x0 = int(w * MASK_X_START)
-    x1 = int(w * MASK_X_END)
+    y0 = int(h * config["mask_y_start"])
+    y1 = int(h * config["mask_y_end"])
+    x0 = int(w * config["mask_x_start"])
+    x1 = int(w * config["mask_x_end"])
 
     mask_arr = np.array(mask)
     mask_arr[y0:y1, x0:x1] = 255
     return Image.fromarray(mask_arr)
 
 
-def remove_watermark(img: Image.Image, lama) -> Image.Image:
+def remove_watermark(img: Image.Image, lama, config: dict) -> Image.Image:
     """Inpaint the watermark region using SimpleLama."""
-    mask = build_mask(img)
+    mask = build_mask(img, config)
     result = lama(img, mask)
     return result
 
@@ -185,11 +235,11 @@ def save_image(img: Image.Image, episode: str, original_path: Path):
 # Calibration helper
 # ---------------------------------------------------------------------------
 
-def calibrate(episode: str):
-    """Overlay the mask region on the first image and display it."""
+def calibrate(episode: str, config: dict):
+    """Overlay the mask region on the first image, then prompt to save config."""
     images = find_images(episode)
     img = Image.open(images[0]).convert("RGB")
-    mask = build_mask(img)
+    mask = build_mask(img, config)
 
     # Tint the masked area red so it's easy to see
     overlay = img.copy()
@@ -208,10 +258,19 @@ def calibrate(episode: str):
 
     print(f"Calibration preview for: {images[0].name}")
     print(f"  Image size : {w} x {h}")
-    print(f"  Mask region: y={MASK_Y_START*100:.0f}%–{MASK_Y_END*100:.0f}%  "
-          f"x={MASK_X_START*100:.0f}%–{MASK_X_END*100:.0f}%")
-    print("Adjust MASK_* constants in process.py if the red overlay doesn't cover the watermark.")
+    print(f"  Mask region: y={config['mask_y_start']*100:.0f}%–{config['mask_y_end']*100:.0f}%  "
+          f"x={config['mask_x_start']*100:.0f}%–{config['mask_x_end']*100:.0f}%")
     preview.show()
+
+    answer = input("Save these mask coordinates for this episode? [y/N] ").strip().lower()
+    if answer == "y":
+        CONFIG_DIR.mkdir(exist_ok=True)
+        config_path = CONFIG_DIR / f"{episode}.json"
+        with config_path.open("w") as f:
+            json.dump(config, f, indent=2)
+        print(f"Saved → {config_path}")
+    else:
+        print("Not saved. Adjust MASK_* constants in process.py and re-run --calibrate.")
 
 
 # ---------------------------------------------------------------------------
@@ -221,9 +280,10 @@ def calibrate(episode: str):
 def main():
     args = parse_args()
     episode = args.episode
+    config = load_episode_config(episode)
 
     if args.calibrate:
-        calibrate(episode)
+        calibrate(episode, config)
         return
 
     mapping = load_excel(episode)
@@ -252,7 +312,7 @@ def main():
 
         print(f"  Processing {img_path.name} (barcode: {barcode_value})…")
         img = Image.open(img_path).convert("RGB")
-        img = remove_watermark(img, lama)
+        img = remove_watermark(img, lama, config)
         img = embed_barcode(img, barcode_value)
         save_image(img, episode, img_path)
         processed += 1
