@@ -11,7 +11,8 @@ Batch-processes per-episode product photos:
 
 ## Requirements
 
-- Python 3.11+
+- **Python 3.11** (required — 3.12+ breaks pre-built wheels for `simple-lama-inpainting` and numpy)
+  Download: https://www.python.org/downloads/release/python-3119/
 - On Linux/macOS, `libzbar` is required for barcode verification:
   ```bash
   # Ubuntu / Debian
@@ -34,9 +35,14 @@ cd photo-processor
 
 ### 2. Create the virtual environment
 
+Use the `py` launcher to pin Python 3.11 explicitly:
+
 ```bash
-python -m venv .venv
+py -3.11 -m venv .venv
 ```
+
+> Using `python -m venv .venv` may pick up a newer Python version (e.g. 3.13) which lacks
+> pre-built wheels for the AI dependencies and will fail during `pip install`.
 
 ### 3. Activate the virtual environment
 
@@ -69,6 +75,10 @@ Your prompt will change to show `(.venv)` confirming the environment is active. 
 ```bash
 pip install -r requirements.txt
 ```
+
+> **Important:** Always install `requirements.txt` (not `requirements-ci.txt`) to run the tool.
+> `requirements-ci.txt` is for CI pipelines only — it intentionally excludes the AI inpainting
+> library (`simple-lama-inpainting`) and will cause a `ModuleNotFoundError` if used to run the script.
 
 > `simple-lama-inpainting` downloads a ~200 MB AI model on first run. Subsequent runs use the cached model.
 
@@ -232,8 +242,10 @@ Each processing run appends to `output/<episode>/report.json`:
 
 ## Development
 
+> For running the tool use `requirements.txt`. The commands below are for linting and testing only.
+
 ```bash
-# Install CI/dev dependencies (no PyTorch — fast)
+# Install CI/dev dependencies (no PyTorch — fast; does NOT let you run process.py)
 pip install -r requirements-ci.txt
 
 # Run linter
