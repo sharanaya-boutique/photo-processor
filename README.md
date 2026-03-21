@@ -40,9 +40,19 @@ python -m venv .venv
 
 ### 3. Activate the virtual environment
 
-**Windows (Command Prompt / PowerShell)**
+**Windows — Git Bash**
+```bash
+source .venv/Scripts/activate
+```
+
+**Windows — PowerShell**
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+**Windows — Command Prompt**
 ```bat
-.venv\Scripts\activate
+.venv\Scripts\activate.bat
 ```
 
 **macOS / Linux**
@@ -51,6 +61,8 @@ source .venv/bin/activate
 ```
 
 Your prompt will change to show `(.venv)` confirming the environment is active. All commands from this point must be run inside the activated environment.
+
+> **Note:** When creating the venv on Windows you may see `Could not find platform independent libraries <prefix>`. This is a harmless warning — the environment is created successfully.
 
 ### 4. Install Python dependencies
 
@@ -74,9 +86,14 @@ You should see the full list of CLI flags with no import errors.
 
 Every time you open a new terminal, activate the environment before running the tool:
 
-**Windows**
-```bat
-.venv\Scripts\activate
+**Windows — Git Bash**
+```bash
+source .venv/Scripts/activate
+```
+
+**Windows — PowerShell**
+```powershell
+.venv\Scripts\Activate.ps1
 ```
 
 **macOS / Linux**
