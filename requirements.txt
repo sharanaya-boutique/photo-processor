@@ -5,3 +5,4 @@ simple-lama-inpainting
 opencv-python
 numpy
 pyzbar  # requires libzbar native system library (apt: libzbar0, brew: zbar)
+ruff

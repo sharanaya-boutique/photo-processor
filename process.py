@@ -521,14 +521,14 @@ def print_cross_episode_summary(results: list[dict]) -> None:
     failed_episodes = [r for r in results if r.get("failed")]
 
     print(f"\n{'='*60}")
-    print(f"  Cross-episode summary")
+    print("  Cross-episode summary")
     print(f"{'='*60}")
     print(f"  Episodes  : {total_episodes}")
     print(f"  Processed : {total_processed}")
     print(f"  Skipped   : {total_skipped}")
     print(f"  Errors    : {total_errors}")
     if failed_episodes:
-        print(f"\n  Episodes with failures:")
+        print("\n  Episodes with failures:")
         for r in failed_episodes:
             ep      = r.get("episode", "?")
             err_msg = r.get("error", "")

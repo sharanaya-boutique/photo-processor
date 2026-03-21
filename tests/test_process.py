@@ -1,7 +1,6 @@
 """Lightweight CI tests — no real media or Excel files required."""
 
 import numpy as np
-import pytest
 from pathlib import Path
 from PIL import Image
 
