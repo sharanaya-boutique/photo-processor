@@ -5,12 +5,14 @@ Usage:
     python process.py --episode=EP-271
     python process.py --episode=EP-271 --calibrate
     python process.py --episode=EP-271 --verify-only
+    python process.py --episode=EP-271 --report
 """
 
 import argparse
 import json
 import sys
 import warnings
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +39,8 @@ def parse_args():
                         help="Show mask overlay on first image and exit (for calibration)")
     parser.add_argument("--verify-only", action="store_true",
                         help="Scan all saved images in output/<episode>/ and print a barcode pass/fail table")
+    parser.add_argument("--report", action="store_true",
+                        help="Print the last run's summary for an already-processed episode without reprocessing")
     return parser.parse_args()
 
 
@@ -297,6 +301,81 @@ def verify_only_mode(episode: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Report / audit trail
+# ---------------------------------------------------------------------------
+
+def _report_path(episode: str) -> Path:
+    return Path("output") / episode / "report.json"
+
+
+def load_report(episode: str) -> dict:
+    """Load existing report for *episode*, or return a fresh skeleton."""
+    path = _report_path(episode)
+    if path.exists():
+        try:
+            with path.open() as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass  # treat a corrupt file as missing
+    return {"episode": episode, "runs": []}
+
+
+def save_report(episode: str, report: dict) -> None:
+    """Write *report* to output/<episode>/report.json."""
+    path = _report_path(episode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(report, f, indent=2)
+
+
+def print_summary_table(run: dict) -> None:
+    """Print a human-readable summary table for a single run record."""
+    ts = run.get("timestamp", "")
+    processed = run.get("processed", 0)
+    skipped   = run.get("skipped", 0)
+    errors    = run.get("errors", 0)
+    images    = run.get("images", [])
+
+    print(f"\n{'='*60}")
+    print(f"  Run summary  {ts}")
+    print(f"{'='*60}")
+    print(f"  Processed : {processed}")
+    print(f"  Skipped   : {skipped}")
+    print(f"  Errors    : {errors}")
+    print(f"{'='*60}")
+
+    if images:
+        print(f"\n{'FILE':<40}  {'STATUS':<10}  BARCODE_VERIFIED")
+        print("-" * 72)
+        for img in images:
+            bv = img.get("barcode_verified")
+            bv_str = "true" if bv is True else ("false" if bv is False else "null")
+            print(f"{img['file']:<40}  {img['status']:<10}  {bv_str}")
+        print("-" * 72)
+
+    problem_images = [i for i in images if i["status"] in ("skipped", "error")]
+    if problem_images:
+        print("\nImages requiring attention:")
+        for img in problem_images:
+            print(f"  [{img['status'].upper()}] {img['file']}")
+    print()
+
+
+def report_mode(episode: str) -> None:
+    """Print the last run's summary without reprocessing."""
+    path = _report_path(episode)
+    if not path.exists():
+        sys.exit(f"ERROR: No report found for episode '{episode}' at {path}")
+
+    report = load_report(episode)
+    runs = report.get("runs", [])
+    if not runs:
+        sys.exit(f"ERROR: Report for '{episode}' contains no runs.")
+
+    print_summary_table(runs[-1])
+
+
+# ---------------------------------------------------------------------------
 # Calibration helper
 # ---------------------------------------------------------------------------
 
@@ -355,6 +434,10 @@ def main():
         passed = verify_only_mode(episode)
         sys.exit(0 if passed else 1)
 
+    if args.report:
+        report_mode(episode)
+        return
+
     mapping = load_excel(episode)
     images  = find_images(episode)
 
@@ -365,9 +448,10 @@ def main():
         from simple_lama_inpainting import SimpleLama
         lama = SimpleLama()
 
-    processed = 0
-    skipped   = 0
-    errors    = 0
+    processed   = 0
+    skipped     = 0
+    errors      = 0
+    image_records: list[dict] = []
 
     for img_path in images:
         product_id = extract_product_id(img_path)
@@ -375,6 +459,12 @@ def main():
         if product_id not in mapping:
             print(f"  SKIP {img_path.name} — no Excel entry for '{product_id}'")
             skipped += 1
+            image_records.append({
+                "file":             img_path.name,
+                "product_id":       product_id,
+                "status":           "skipped",
+                "barcode_verified": None,
+            })
             continue
 
         row           = mapping[product_id]
@@ -385,13 +475,32 @@ def main():
         img = remove_watermark(img, lama, config)
         img = embed_barcode(img, barcode_value)
         out_path = save_image(img, episode, img_path)
-        if not verify_barcode(out_path, barcode_value):
+        barcode_ok = verify_barcode(out_path, barcode_value)
+        if not barcode_ok:
             errors += 1
         processed += 1
+        image_records.append({
+            "file":             img_path.name,
+            "product_id":       product_id,
+            "status":           "ok" if barcode_ok else "error",
+            "barcode_verified": barcode_ok,
+        })
 
-    print(f"\nDone. {processed} processed, {skipped} skipped, {errors} barcode error(s).")
-    if skipped:
-        print("Skipped images had no matching product ID in the Excel file.")
+    run_record = {
+        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "processed": processed,
+        "skipped":   skipped,
+        "errors":    errors,
+        "images":    image_records,
+    }
+
+    report = load_report(episode)
+    report["runs"].append(run_record)
+    save_report(episode, report)
+    print(f"\nReport written → {_report_path(episode)}")
+
+    print_summary_table(run_record)
+
     if errors:
         sys.exit(1)
 
