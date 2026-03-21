@@ -28,16 +28,24 @@ def test_extract_product_id_no_variant():
 # build_mask
 # ---------------------------------------------------------------------------
 
+DEFAULT_CONFIG = {
+    "mask_y_start": MASK_Y_START,
+    "mask_y_end":   MASK_Y_END,
+    "mask_x_start": MASK_X_START,
+    "mask_x_end":   MASK_X_END,
+}
+
+
 def test_build_mask_shape():
     img = Image.new("RGB", (100, 200), color=(255, 255, 255))
-    mask = build_mask(img)
+    mask = build_mask(img, DEFAULT_CONFIG)
     assert mask.size == (100, 200)
 
 
 def test_build_mask_region():
     w, h = 100, 200
     img = Image.new("RGB", (w, h), color=(255, 255, 255))
-    mask = build_mask(img)
+    mask = build_mask(img, DEFAULT_CONFIG)
     arr = np.array(mask)
 
     y0 = int(h * MASK_Y_START)
