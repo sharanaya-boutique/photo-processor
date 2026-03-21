@@ -25,25 +25,69 @@ Batch-processes per-episode product photos:
 
 ## Setup
 
+### 1. Clone the repo
+
 ```bash
-# 1. Clone the repo
 git clone https://github.com/sharanaya-boutique/photo-processor.git
 cd photo-processor
+```
 
-# 2. Create and activate a virtual environment
+### 2. Create the virtual environment
+
+```bash
 python -m venv .venv
+```
 
-# Windows
+### 3. Activate the virtual environment
+
+**Windows (Command Prompt / PowerShell)**
+```bat
 .venv\Scripts\activate
+```
 
-# macOS / Linux
+**macOS / Linux**
+```bash
 source .venv/bin/activate
+```
 
-# 3. Install dependencies
+Your prompt will change to show `(.venv)` confirming the environment is active. All commands from this point must be run inside the activated environment.
+
+### 4. Install Python dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-> `simple-lama-inpainting` downloads a ~200 MB model on first run. Subsequent runs use the cached model.
+> `simple-lama-inpainting` downloads a ~200 MB AI model on first run. Subsequent runs use the cached model.
+
+### 5. Verify the install
+
+```bash
+python process.py --help
+```
+
+You should see the full list of CLI flags with no import errors.
+
+---
+
+### Activating the environment in future sessions
+
+Every time you open a new terminal, activate the environment before running the tool:
+
+**Windows**
+```bat
+.venv\Scripts\activate
+```
+
+**macOS / Linux**
+```bash
+source .venv/bin/activate
+```
+
+To deactivate when done:
+```bash
+deactivate
+```
 
 ---
 
