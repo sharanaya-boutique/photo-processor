@@ -4,6 +4,7 @@ process.py — Sharanaya Boutique Photo Processor
 Usage:
     python process.py --episode=EP-271
     python process.py --episode=EP-271 --calibrate
+    python process.py --episode=EP-271 --verify-only
 """
 
 import argparse
@@ -31,6 +32,8 @@ def parse_args():
     parser.add_argument("--episode", required=True, help="Episode identifier, e.g. EP-271")
     parser.add_argument("--calibrate", action="store_true",
                         help="Show mask overlay on first image and exit (for calibration)")
+    parser.add_argument("--verify-only", action="store_true",
+                        help="Scan all saved images in output/<episode>/ and print a barcode pass/fail table")
     return parser.parse_args()
 
 
@@ -173,12 +176,74 @@ def embed_barcode(img: Image.Image, value: str) -> Image.Image:
 # Output
 # ---------------------------------------------------------------------------
 
-def save_image(img: Image.Image, episode: str, original_path: Path):
+def save_image(img: Image.Image, episode: str, original_path: Path) -> Path:
     out_dir = Path("output") / episode
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / original_path.name
     img.save(out_path, "JPEG", quality=95)
     print(f"  Saved → {out_path}")
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Barcode verification
+# ---------------------------------------------------------------------------
+
+def decode_barcode(image_path: Path) -> str | None:
+    """Return the first decoded barcode string from image_path, or None."""
+    from pyzbar.pyzbar import decode as pyzbar_decode
+    img = Image.open(image_path).convert("RGB")
+    results = pyzbar_decode(img)
+    if results:
+        return results[0].data.decode("utf-8")
+    return None
+
+
+def verify_barcode(out_path: Path, expected_value: str) -> bool:
+    """Decode barcode from out_path and compare against expected_value.
+
+    Returns True on match, False on mismatch or decode failure.
+    Prints an ERROR line when the barcode does not match.
+    """
+    decoded = decode_barcode(out_path)
+    if decoded != expected_value:
+        print(f"ERROR: barcode mismatch for {out_path}  "
+              f"(expected={expected_value!r}, got={decoded!r})")
+        return False
+    return True
+
+
+def verify_only_mode(episode: str) -> bool:
+    """Scan all images in output/<episode>/ and print a pass/fail table.
+
+    Returns True if every barcode passed, False if any failed.
+    """
+    out_dir = Path("output") / episode
+    if not out_dir.exists():
+        sys.exit(f"ERROR: Output directory not found: {out_dir}")
+
+    images = sorted(out_dir.glob("*.jpg")) + sorted(out_dir.glob("*.JPG"))
+    if not images:
+        sys.exit(f"ERROR: No .jpg images found in {out_dir}")
+
+    print(f"\nVerifying {len(images)} image(s) in {out_dir}\n")
+    print(f"{'FILE':<40}  {'EXPECTED':<20}  {'DECODED':<20}  STATUS")
+    print("-" * 100)
+
+    all_passed = True
+    for img_path in images:
+        expected = extract_product_id(img_path)
+        decoded  = decode_barcode(img_path)
+        passed   = decoded == expected
+        status   = "PASS" if passed else "FAIL"
+        if not passed:
+            all_passed = False
+        print(f"{img_path.name:<40}  {expected:<20}  {str(decoded):<20}  {status}")
+
+    print("-" * 100)
+    overall = "ALL PASSED" if all_passed else "FAILURES DETECTED"
+    print(f"\nResult: {overall}\n")
+    return all_passed
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +291,10 @@ def main():
         calibrate(episode)
         return
 
+    if args.verify_only:
+        passed = verify_only_mode(episode)
+        sys.exit(0 if passed else 1)
+
     mapping = load_excel(episode)
     images  = find_images(episode)
 
@@ -238,6 +307,7 @@ def main():
 
     processed = 0
     skipped   = 0
+    errors    = 0
 
     for img_path in images:
         product_id = extract_product_id(img_path)
@@ -254,12 +324,16 @@ def main():
         img = Image.open(img_path).convert("RGB")
         img = remove_watermark(img, lama)
         img = embed_barcode(img, barcode_value)
-        save_image(img, episode, img_path)
+        out_path = save_image(img, episode, img_path)
+        if not verify_barcode(out_path, barcode_value):
+            errors += 1
         processed += 1
 
-    print(f"\nDone. {processed} processed, {skipped} skipped.")
+    print(f"\nDone. {processed} processed, {skipped} skipped, {errors} barcode error(s).")
     if skipped:
         print("Skipped images had no matching product ID in the Excel file.")
+    if errors:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
