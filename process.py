@@ -131,19 +131,19 @@ def load_excel(episode: str) -> dict:
 
     mapping = {}
     for row in ws.iter_rows(min_row=2, values_only=True):  # skip header row
-        if not row or len(row) < 9:
+        if not row or len(row) < 6:
             continue
-        episode_col, sln, bill_done, seq, price1, price2, fabric, color, product_id = row[:9]
+        episode_col, slno, price1, fabric, color, product_id = row[:9]
         if not product_id:
             continue
         product_id = str(product_id).strip()
         mapping[product_id] = {
-            "episode":    episode_col,
-            "sln":        sln,
-            "product_id": product_id,
-            "price":      price1,
-            "fabric":     fabric,
-            "color":      color,
+            "Episode":    episode_col,
+            "Slno":        slno,
+            "Barcode":  product_id,
+            "Price":      price1,
+            "Description":     fabric,
+            "Color":      color,
         }
 
     if not mapping:
@@ -477,7 +477,7 @@ def _run_pipeline(episode: str, lama) -> dict:
             continue
 
         row           = mapping[product_id]
-        barcode_value = row["product_id"]
+        barcode_value = row["Barcode"]
 
         print(f"  Processing {img_path.name} (barcode: {barcode_value})…")
         img = Image.open(img_path).convert("RGB")
