@@ -1,0 +1,6 @@
+openpyxl
+Pillow
+python-barcode[images]
+numpy
+ruff
+pytest

@@ -43,7 +43,7 @@ Include a `--calibrate` flag that overlays the mask region in red on the first i
 
 ---
 
-## Phase 2: Per-Episode Mask Configuration
+## Phase 2: Per-Episode Mask Configuration ✅ IMPLEMENTED
 
 **User stories**:
 - As an operator, I can adjust the watermark mask for a specific episode without changing the code, because watermark placement shifts slightly between episodes.
@@ -60,14 +60,14 @@ config/
 
 ### Acceptance criteria
 
-- [ ] If `config/<episode>.json` exists, its mask values are used instead of the module-level defaults
-- [ ] `--calibrate` prompts the user to save the displayed mask coordinates and writes `config/<episode>.json` on confirmation
-- [ ] Missing config file falls back to defaults without error
-- [ ] Config file values are validated (0–1 range, start < end); bad values print a clear error
+- [x] If `config/<episode>.json` exists, its mask values are used instead of the module-level defaults
+- [x] `--calibrate` prompts the user to save the displayed mask coordinates and writes `config/<episode>.json` on confirmation
+- [x] Missing config file falls back to defaults without error
+- [x] Config file values are validated (0–1 range, start < end); bad values print a clear error
 
 ---
 
-## Phase 3: Barcode Readability Verification
+## Phase 3: Barcode Readability Verification ✅ IMPLEMENTED
 
 **User stories**:
 - As an operator, I want confirmation that the embedded barcodes are actually scannable, not just visually present.
@@ -78,14 +78,14 @@ After saving each output image, decode the barcode from the saved file using `py
 
 ### Acceptance criteria
 
-- [ ] Each saved image is scanned immediately after writing; a mismatch prints `ERROR: barcode mismatch for <file>`
-- [ ] `--verify-only --episode=EP-271` scans all files in `output/EP-271/` and prints a pass/fail table
-- [ ] Exit code is non-zero if any barcode failed to scan or mismatched
-- [ ] `requirements.txt` updated with `pyzbar` (and system note about `libzbar` native dependency)
+- [x] Each saved image is scanned immediately after writing; a mismatch prints `ERROR: barcode mismatch for <file>`
+- [x] `--verify-only --episode=EP-271` scans all files in `output/EP-271/` and prints a pass/fail table
+- [x] Exit code is non-zero if any barcode failed to scan or mismatched
+- [x] `requirements.txt` updated with `pyzbar` (and system note about `libzbar` native dependency)
 
 ---
 
-## Phase 4: Run Report & Audit Trail
+## Phase 4: Run Report & Audit Trail ✅ IMPLEMENTED
 
 **User stories**:
 - As an operator, I want a machine-readable summary of each processing run so I can track which images were processed, which were skipped, and catch Excel/image mismatches.
@@ -114,14 +114,14 @@ After each run, write a JSON report to `output/<episode>/report.json` summarisin
 
 ### Acceptance criteria
 
-- [ ] `output/<episode>/report.json` is written (or appended) at the end of every run
-- [ ] Report includes per-image status: `ok`, `skipped` (no Excel row), or `error` (inpainting/barcode failure)
-- [ ] Stdout summary table shows totals and lists any skipped/errored images by name
-- [ ] `--report` flag prints the last run's summary for an already-processed episode without reprocessing
+- [x] `output/<episode>/report.json` is written (or appended) at the end of every run
+- [x] Report includes per-image status: `ok`, `skipped` (no Excel row), or `error` (inpainting/barcode failure)
+- [x] Stdout summary table shows totals and lists any skipped/errored images by name
+- [x] `--report` flag prints the last run's summary for an already-processed episode without reprocessing
 
 ---
 
-## Phase 5: Multi-Episode & Batch Processing
+## Phase 5: Multi-Episode & Batch Processing ✅ IMPLEMENTED
 
 **User stories**:
 - As an operator, I can process multiple episodes in one command, or all episodes that have an Excel file, to prepare an entire season's catalog in one go.
@@ -132,8 +132,8 @@ Add `--episodes=EP-271,EP-272` (comma-separated list) and `--all` (processes eve
 
 ### Acceptance criteria
 
-- [ ] `--episodes=EP-271,EP-272` processes both episodes in order
-- [ ] `--all` discovers all episode pairs (docs + media both present) and processes them
-- [ ] `--episode` and `--all`/`--episodes` are mutually exclusive; bad combinations print a usage error
-- [ ] Final summary prints totals across all episodes: N episodes, M images processed, K skipped
-- [ ] One episode failing (e.g. missing Excel file) does not abort other episodes; errors are collected and shown at the end
+- [x] `--episodes=EP-271,EP-272` processes both episodes in order
+- [x] `--all` discovers all episode pairs (docs + media both present) and processes them
+- [x] `--episode` and `--all`/`--episodes` are mutually exclusive; bad combinations print a usage error
+- [x] Final summary prints totals across all episodes: N episodes, M images processed, K skipped
+- [x] One episode failing (e.g. missing Excel file) does not abort other episodes; errors are collected and shown at the end
