@@ -1,5 +1,5 @@
 # Actual content — private / large files, not committed
-docs/**
+docs/EP**
 !docs/.gitkeep
 
 media/**
